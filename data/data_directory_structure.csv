@@ -1,0 +1,9 @@
+Sample,File_Type,Path
+0-24_mos,sample_folder,/Users/se/Projects/semantic_summation/data/samples/0-24_mos
+0-24_mos,word2vec_sim_matrix,/Users/se/Projects/semantic_summation/data/samples/0-24_mos/processed/word2vec.csv
+0-24_mos,processed_childes,/Users/se/Projects/semantic_summation/data/samples/0-24_mos/processed/childes_processed.csv
+0-24_mos,processed_mcdi,/Users/se/Projects/semantic_summation/data/samples/0-24_mos/processed/mcdi_processed.csv
+0-24_mos,full_preprocessed_data,/Users/se/Projects/semantic_summation/data/samples/0-24_mos/processed/all_data.csv
+0-24_mos,childes,/Users/se/Projects/semantic_summation/data/samples/0-24_mos/raw/childes.csv
+0-24_mos,mcdi_ibi,/Users/se/Projects/semantic_summation/data/samples/0-24_mos/raw/mcdi_ibi.csv
+0-24_mos,mcdi_cbc,/Users/se/Projects/semantic_summation/data/samples/0-24_mos/raw/mcdi_cbc.csv

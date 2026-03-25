@@ -1,3 +1,4 @@
+
 [workspace]
 authors = ["Sylvia E <sylviae2@illinois.edu>"]
 channels = ["conda-forge"]
@@ -5,7 +6,6 @@ name = "semantic_summation"
 platforms = ["osx-arm64"]
 version = "0.1.0"
 
-[tasks]
 
 [dependencies]
 sqlalchemy = ">=2.0.48,<3"
@@ -15,3 +15,5 @@ matplotlib = ">=3.10.8,<4"
 r-ggplot2 = ">=4.0.2,<5"
 r-purrr = ">=1.2.1,<2"
 nltk = ">=3.9.4,<4"
+pandas = ">=3.0.1,<4"
+inflect = ">=7.5.0,<8"

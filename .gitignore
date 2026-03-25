@@ -205,7 +205,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
 # pixi environments
 .pixi/*
 !.pixi/config.toml
-data/raw/childes_0-24mos.csv
+/Users/se/Projects/semantic_summation/data/samples/0-24_mos/raw/childes.csv
+data/samples/0-24_mos/raw/childes.csv
