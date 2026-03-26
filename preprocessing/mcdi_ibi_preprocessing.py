@@ -294,6 +294,13 @@ def pp_checker(mcdi_ibi_df_old, mcdi_ibi_df_new, word_col_ibi="english_gloss"):
 # since inclusion tends to be for specific theoretical reasons or committments, it is kept this way on purpose
 # dicts are used for efficient lookup here 
 
+def ensure_reason_list(meta):
+    if meta.get("reason") is None:
+        meta["reason"] = []
+    elif isinstance(meta["reason"], str):
+        meta["reason"] = [meta["reason"]]
+    return meta["reason"]
+
 def create_alt_form_dict(mcdi_ibi_df, base_col='base', alt_col='alt'):
     """ 
     looks at the mcdi_ibi_df after preprocessing and generates a first-pass dictionary of each lemma 
@@ -321,7 +328,7 @@ def create_alt_form_dict(mcdi_ibi_df, base_col='base', alt_col='alt'):
         base = row[base_col]
         alt = row[alt_col]
         # initialize alt form with empty metadata
-        alt_map[base][alt] = {"reason": None, "initials": None, "source": None}
+        alt_map[base][alt] = {"reason": [], "initials": None, "source": None}
     
     return dict(alt_map)  # convert to regular dict
 
@@ -345,6 +352,13 @@ def manual_inclusions(alt_forms_dict, csv_path, base_col="base", alt_col="alt",
     :param source: str denoting where the alt form originated from (e.g. ChatGPT 4.0, initials if from a person)
     :return: updated dictionary
     """
+
+    def ensure_reason_list(meta):
+        if meta.get("reason") is None:
+            meta["reason"] = []
+        elif isinstance(meta["reason"], str):
+            meta["reason"] = [meta["reason"]]
+        return meta["reason"]
 
     d = {k: dict(v) for k, v in alt_forms_dict.items()}
     base_keys = set(d.keys())
@@ -372,13 +386,22 @@ def manual_inclusions(alt_forms_dict, csv_path, base_col="base", alt_col="alt",
 
         for f in form:
             if f not in d[key]:
-                d[key][f] = {"reason": reason, "initials": person, "source": origin}
-            else:
-                # update metadata if already exists
-                d[key][f].update({"reason": reason, "initials": person, "source": origin})
+                d[key][f] = {
+                    "reason": [],
+                    "initials": person,
+                    "source": origin
+                }
+
+            meta = d[key][f]
+            reasons = ensure_reason_list(meta)
+
+            if reason is not None:
+                reasons.append(reason)
+
+            meta["initials"] = person
+            meta["source"] = origin
 
     return d
-
 def singular_generator(token):
     sing_token = grammar_machine.singular_noun(token)
     if not sing_token:
@@ -392,30 +415,31 @@ def plural_generator(token):
     return plu_token
 
 def possessive_generator(token):
-    poss_token = grammar_machine.singular_noun(token)
-    if not poss_token:
-        poss_token = token
-    else:
-        poss_token = poss_token + "'s"
+    poss_base = grammar_machine.singular_noun(token)
+    if not poss_base:
+        poss_base = token
+    poss_token = poss_base + "'s"
     return poss_token
 
 def plural_possessive_generator(token):
-    plu_poss_token = grammar_machine.plural_noun(token)
-    if not plu_poss_token:
-        plu_poss_token = token
-    if plu_poss_token[-1] == 's':
-        plu_poss_token = plu_poss_token + "'"
+    plu_token = grammar_machine.plural_noun(token)
+    if not plu_token:
+        plu_token = token
+
+    if plu_token.endswith("s"):
+        plu_poss_token = plu_token + "'"
     else:
-        plu_poss_token = plu_poss_token + "s'"
+        plu_poss_token = plu_token + "s'"
+
     return plu_poss_token
 
 def dumb_plural_generator(token):
     #appends an s to the singular no matter what it is
     # ex. kids will say "gooses" instead of geese
-    dumb_plu_token = grammar_machine.singular_noun(token)
-    if not dumb_plu_token:
-        dumb_plu_token = token
-    dumb_plu_token = token + "s"
+    sing = grammar_machine.singular_noun(token)
+    if not sing:
+        sing = token
+    dumb_plu_token = sing + "s"
     return dumb_plu_token
 
 def dumb_plural_poss_generator(token):
@@ -476,6 +500,13 @@ def grammatically_generated_inclusions(
     :param funcs_to_run: list of tuples where (function object, str with reason) for all functions to run on dict provided
     """
 
+    def ensure_reason_list(meta):
+        if meta.get("reason") is None:
+            meta["reason"] = []
+        elif isinstance(meta["reason"], str):
+            meta["reason"] = [meta["reason"]]
+        return meta["reason"]
+
     d = {k: dict(v) for k, v in alt_forms_dict.items()}
 
     for base, alt_forms in list(d.items()):
@@ -484,15 +515,25 @@ def grammatically_generated_inclusions(
         for alt_form in alt_forms:
             for func, reason in funcs_to_run:
                 generated = func(alt_form)
+
                 if isinstance(generated, str):
                     generated = [generated]  
                 elif isinstance(generated, set):
-                    generated = list(generated) 
+                    generated = list(generated)
+
                 for gen in generated:
+
                     if gen not in d[base] and gen not in additions:
-                        additions[gen] = {"reason": reason, "initials": None, "source": "grammatical_generator"}
+                        additions[gen] = {
+                            "reason": [reason],
+                            "initials": None,
+                            "source": "grammatical_generator"
+                        }
+
                     elif gen in d[base]:
-                        d[base][gen].update({"reason": reason})
+                        meta = d[base][gen]
+                        reasons = ensure_reason_list(meta)
+                        reasons.append(reason)
 
         d[base].update(additions)
 
@@ -505,20 +546,39 @@ def apply_compounding(alt_forms_dict):
         additions = {}
 
         for alt_form in list(alt_forms.keys()):
+
+            parent_meta = d[base].get(alt_form, {})
+            parent_reason = parent_meta.get("reason") or []
+
+            if isinstance(parent_reason, str):
+                parent_reason = [parent_reason]
+
             cmpd_set = compound_word_finder(alt_form)
 
             for cmpd in cmpd_set:
+
                 if cmpd not in d[base]:
-                    additions[cmpd] = {
-                        "reason": "compound-childes_friendly",
+                    d[base][cmpd] = {
+                        "reason": parent_reason + ["compound-childes_friendly"],
                         "initials": None,
                         "source": "grammatical_generator"
                     }
 
+                else:
+                    meta = d[base][cmpd]
+
+                    reasons = meta.get("reason") or []
+                    if isinstance(reasons, str):
+                        reasons = [reasons]
+
+                    reasons.extend(parent_reason)
+                    reasons.append("compound-childes_friendly")
+
+                    meta["reason"] = reasons
+
         d[base].update(additions)
 
     return d
-
 def merge_mcdi_incl_dict_w_mcdi_df(mcdi_ibi_df, 
                                    alt_form_dict, 
                                    base_col='base', 
@@ -549,14 +609,21 @@ def merge_mcdi_incl_dict_w_mcdi_df(mcdi_ibi_df,
 
         if alt_forms_meta is None:
             missing_keys.add(key)
-            alt_forms_meta = {key: {"reason": None, "initials": None, "source": None}}
+            alt_forms_meta = {key: {"reason": [], "initials": None, "source": None}}
 
         for alt, meta in alt_forms_meta.items():
             new_row = row.copy()
             new_row[alt_col] = alt
-            new_row[reason_col] = meta.get("reason")
+
+            reasons = meta.get("reason") or []
+            if isinstance(reasons, str):
+                reasons = [reasons]
+
+            new_row[reason_col] = ":".join(reasons) if reasons else ""
+
             new_row[initials_col] = meta.get("initials")
             new_row[source_col] = meta.get("source")
+
             new_rows.append(new_row)
 
     expanded_df = pd.DataFrame(new_rows)
@@ -567,4 +634,3 @@ def merge_mcdi_incl_dict_w_mcdi_df(mcdi_ibi_df,
         warnings.warn(f"alt_form_dict is missing these keys present in the df: {missing_keys}")
 
     return expanded_df
-
