@@ -7,9 +7,13 @@ import re
 import warnings
 from collections import defaultdict
 import inflect
+import json
 
 grammar_machine = inflect.engine()
 
+# ----------------------------------------------------    
+#  SETUP FUNCTIONS
+# ----------------------------------------------------    
 
 def mcdi_ibi_setup(raw_mcdi_df, 
                    orig_base="english_gloss",
@@ -45,6 +49,10 @@ def mcdi_ibi_setup(raw_mcdi_df,
     mcdi_ibi['excl_reason'] = None
 
     return mcdi_ibi
+
+# ----------------------------------------------------   
+#  EXCLUSION FUNCTIONS
+# ----------------------------------------------------   
 
 def exclude_cats(
     mcdi_ibi_df,
@@ -278,87 +286,98 @@ def pp_checker(mcdi_ibi_df_old, mcdi_ibi_df_new, word_col_ibi="english_gloss"):
         warnings.warn(f"{not_shared_wds} are not in both dfs")
 
 
-# ------------- 
-# SECOND PASS
-# ------------- 
+# ----------------------------------------------------   
+#  INCLUSION FUNCTIONS
+# ----------------------------------------------------  
 
-def create_alt_form_dict(mcdi_ibi_df, main_col='english_gloss', alt_col='alt_forms'):
+# you may notice that the inclusion functions have a more segregated pipeline than the exclusion ones
+# since inclusion tends to be for specific theoretical reasons or committments, it is kept this way on purpose
+# dicts are used for efficient lookup here 
 
-
-    """ looks at the mcdi_ibi_df after preprocessing and generates a first-pass dictionary of each lemma and it's alternative forms to facilitate matching of single mcdi word to multiple forms 
+def create_alt_form_dict(mcdi_ibi_df, base_col='base', alt_col='alt'):
+    """ 
+    looks at the mcdi_ibi_df after preprocessing and generates a first-pass dictionary of each lemma 
+    and its alternative forms to facilitate matching of single mcdi word to multiple forms.
+    Stores metadata as a dict for each alt form.
 
     :param mcdi_ibi_df: pd df with at minimum 2 cols, one for the word, another for each alternative form that word has
-    :param main_col: str of pd df column name with word to look for
+    :param base_col: str of pd df column name with word to look for
     :param alt_col: str of pd df column name with alternative forms of each word
 
-    :returns alt_map: dictionary of each word in mcdi_ibi_df as {base form: {'alt form', 'alt form', 'alt form'}, ...}
+    :returns alt_map: dictionary of each word in mcdi_ibi_df as 
+        {base form: {alt form: {"reason": None, "initials": None, "source": None}, ...}, ...}
     """
 
     # initialize dictionary
-    alt_map = defaultdict(set)
+    alt_map = defaultdict(dict)
 
     # process original df to remove all empty rows and make a copy, then lowercase
     df = mcdi_ibi_df.dropna(subset=[alt_col]).copy()
-    df[main_col] = df[main_col].str.lower()
+    df[base_col] = df[base_col].str.lower()
     df[alt_col] = df[alt_col].str.lower()
 
     # make dictionary of each word and alt forms from df
     for _, row in df.iterrows():
-        base = row[main_col]
+        base = row[base_col]
         alt = row[alt_col]
-        alt_map[base].add(alt) # add to dictionary key without overwriting key for base form
+        # initialize alt form with empty metadata
+        alt_map[base][alt] = {"reason": None, "initials": None, "source": None}
     
-    alt_map = dict(alt_map) # convert to a regular dictionary from defaultdict
-
-    return alt_map
+    return dict(alt_map)  # convert to regular dict
 
 
-def manual_inclusions(alt_forms_dict, csv_path, base_col="base", alt_col="alt"):
+def manual_inclusions(alt_forms_dict, csv_path, base_col="base", alt_col="alt",
+                      incl_reason="incl_reason", initials="initials", source="source"):
+    
+    #NOTE: manual inclusions are csv only such that if LLMs were introduced to generate alts, we would be able to track back data
+    #NOTE: this step MUST be performed before any downstream steps so that their inclusion is also grammatically transformed as necessary
+
     """
-    Updates existing alt_forms_dict using base/alt pairs from a CSV to include non-programmatically generable alternative forms for words.
+    updates existing alt_forms_dict using base/alt pairs from a CSV to include non-programmatically generated 
+    alternative forms for words. Each alt form includes metadata: reason, initials, source.
 
-    :param alt_forms_dict: existing dictionary {base: set(alt_forms)}
+    :param alt_forms_dict: existing dictionary {base: {alt: {metadata}}}
     :param csv_path: path to CSV containing manual inclusions
     :param base_col: column name in CSV for base word
     :param alt_col: column name in CSV for alternate form
+    :param incl_reason: col name in CSV specifying why word was included
+    :param initials: str for initials of person who approved inclusion of alt form
+    :param source: str denoting where the alt form originated from (e.g. ChatGPT 4.0, initials if from a person)
     :return: updated dictionary
     """
 
-    d = {k: set(v) for k, v in alt_forms_dict.items()}
+    d = {k: dict(v) for k, v in alt_forms_dict.items()}
     base_keys = set(d.keys())
 
     df = pd.read_csv(csv_path)
 
     for _, row in df.iterrows():
         key = row[base_col]
-        forms = row[alt_col]
+        form = row[alt_col]
+        reason = row.get(incl_reason, None)
+        person = row.get(initials, None)
+        origin = row.get(source, None)
 
         if key not in base_keys:
             warnings.warn(f"warning: '{key}' not an mcdi word or not the exact mcdi form. check for typos?")
 
-        if pd.isna(key) or pd.isna(forms):
+        if pd.isna(key) or pd.isna(form):
             continue
 
-        if isinstance(forms, str):
-            forms = [forms]
+        if isinstance(form, str):
+            form = [form]
 
         if key not in d:
-            d[key] = set()
+            d[key] = {}
 
-        d[key].update(forms)
+        for f in form:
+            if f not in d[key]:
+                d[key][f] = {"reason": reason, "initials": person, "source": origin}
+            else:
+                # update metadata if already exists
+                d[key][f].update({"reason": reason, "initials": person, "source": origin})
 
     return d
-
-def append_unique(d, key, values):
-
-    if key not in d:
-        d[key] = set()
-
-    if isinstance(values, str):
-        d[key].add(values)
-    else:
-        d[key].update(values)
-
 
 def singular_generator(token):
     sing_token = grammar_machine.singular_noun(token)
@@ -438,72 +457,114 @@ def compound_word_finder(token):
 
     return cmpd_set
 
-def grammatical_generator(alt_forms_dict, skip_list=None):
+def grammatically_generated_inclusions(
+    alt_forms_dict, 
+    funcs_to_run=[
+        (plural_generator, "plural"),
+        (singular_generator, "singular"),
+        (possessive_generator, "possessive"),
+        (plural_possessive_generator, "plural possessive"),
+        (dumb_plural_generator, "dumb plural"),
+        (dumb_plural_poss_generator, "dumb plural possessive")
+    ]
+):
 
-    d = alt_forms_dict.copy()
+    """
+    applies grammatical transforms to all alt forms in the alt forms dict (e.g. "dog" -> "dog+s" both map to "dog")
 
-    if skip_list is None:
-        skip_list = []
+    :param alt_forms_dict: existing dictionary {base: {alt: {metadata}}}
+    :param funcs_to_run: list of tuples where (function object, str with reason) for all functions to run on dict provided
+    """
 
-    for base, alt_forms in alt_forms_dict.items():
-        base_additions = set()
+    d = {k: dict(v) for k, v in alt_forms_dict.items()}
+
+    for base, alt_forms in list(d.items()):
+        additions = {}
+
         for alt_form in alt_forms:
-            if "plural_generator" not in skip_list:
-                base_additions.add(plural_generator(alt_form))
-            if "singular_generator" not in skip_list:
-                base_additions.add(singular_generator(alt_form))
-            if "possessive_generator" not in skip_list:
-                base_additions.add(possessive_generator(alt_form))
-            if "plural_possessive_generator" not in skip_list:
-                base_additions.add(plural_possessive_generator(alt_form))
-            if "dumb_plural_generator" not in skip_list:
-                base_additions.add(dumb_plural_generator(alt_form))
-            if "dumb_plural_poss_generator" not in skip_list:
-                base_additions.add(dumb_plural_poss_generator(alt_form))
-        alt_forms_dict[base].update(base_additions)
+            for func, reason in funcs_to_run:
+                generated = func(alt_form)
+                if isinstance(generated, str):
+                    generated = [generated]  
+                elif isinstance(generated, set):
+                    generated = list(generated) 
+                for gen in generated:
+                    if gen not in d[base] and gen not in additions:
+                        additions[gen] = {"reason": reason, "initials": None, "source": "grammatical_generator"}
+                    elif gen in d[base]:
+                        d[base][gen].update({"reason": reason})
 
-    if "compound_word_finder" not in skip_list:
-        for base, alt_forms in alt_forms_dict.items():
-            cmpd_set = set()
-            for alt_form in alt_forms:
-                cmpd_set |= compound_word_finder(alt_form)
-            alt_forms_dict[base].update(cmpd_set)
+        d[base].update(additions)
 
-    return alt_forms_dict
+    return d
 
+def apply_compounding(alt_forms_dict):
+    d = {k: dict(v) for k, v in alt_forms_dict.items()}
 
-def merge_mcdi_dict_into_mcdi_df(mcdi_ibi_df, alt_form_dict, main_col='english_gloss', alt_col='alt_forms'):
+    for base, alt_forms in list(d.items()):
+        additions = {}
+
+        for alt_form in list(alt_forms.keys()):
+            cmpd_set = compound_word_finder(alt_form)
+
+            for cmpd in cmpd_set:
+                if cmpd not in d[base]:
+                    additions[cmpd] = {
+                        "reason": "compound-childes_friendly",
+                        "initials": None,
+                        "source": "grammatical_generator"
+                    }
+
+        d[base].update(additions)
+
+    return d
+
+def merge_mcdi_incl_dict_w_mcdi_df(mcdi_ibi_df, 
+                                   alt_form_dict, 
+                                   base_col='base', 
+                                   alt_col='alt', 
+                                   reason_col='incl_reason', 
+                                   initials_col='initials', 
+                                   source_col='source'):
+    """
+    once alt forms dict is done being created, applies all inclusions to dataframe 
+
+    :param mcdi_ibi_df: pd df of dataframe to be modified (mcdi item-by-item dataframe)
+    :param alt_form_dict: dict of inclusions to be applied 
+    :param base_col: str of what base col is in mcdi_ibi_df
+    :param alt_col: str of what alt col is in mcdi_ibi_df 
+    :param reason_col: str of what reason col is in mcdi_ibi_df 
+    :param initials_col: str of what initials col is in mcdi_ibi_df 
+    :param source_col: str of what source col is in mcdi_ibi_df 
+
+    """
 
     new_rows = []
     missing_keys = set()
 
     for _, row in mcdi_ibi_df.iterrows():
-        key = row[main_col]
-        alt_forms = alt_form_dict.get(key, {key})
-        if isinstance(alt_forms, str):
-            alt_forms = {alt_forms}
-        elif not isinstance(alt_forms, (set, list)):
-            alt_forms = set(alt_forms)
+        key = row[base_col]
 
-        for alt in alt_forms:
+        alt_forms_meta = alt_form_dict.get(key)
+
+        if alt_forms_meta is None:
+            missing_keys.add(key)
+            alt_forms_meta = {key: {"reason": None, "initials": None, "source": None}}
+
+        for alt, meta in alt_forms_meta.items():
             new_row = row.copy()
             new_row[alt_col] = alt
+            new_row[reason_col] = meta.get("reason")
+            new_row[initials_col] = meta.get("initials")
+            new_row[source_col] = meta.get("source")
             new_rows.append(new_row)
 
     expanded_df = pd.DataFrame(new_rows)
 
-    expanded_df = expanded_df.drop_duplicates().reset_index(drop=True)
-
-    expected_count = sum(len(v) if not isinstance(v, str) else 1 for v in alt_form_dict.values())
-    actual_count = len(expanded_df)
-
-    if actual_count != expected_count:
-        warnings.warn(
-            f"row count is mismatched. expanded_df has {actual_count} rows, "
-            f"but sum of alt form lengths is {expected_count}."
-        )
+    expanded_df = expanded_df.drop_duplicates().sort_values(by=[base_col, alt_col]).reset_index(drop=True)
 
     if missing_keys:
         warnings.warn(f"alt_form_dict is missing these keys present in the df: {missing_keys}")
 
     return expanded_df
+

@@ -1,26 +1,26 @@
-base,alt,incl_reason
-mommy*,mama
-mommy*,mum
-mommy*,mummy
-mommy*,mom
-mommy*,mother
-daddy*,dada
-daddy*,baba
-daddy*,papa
-daddy*,father
-daddy*,dad
-grandma*,grammy
-grandma*,grandmother
-grandpa*,grampy
-grandpa*,grandfather
-dog,doggie
-dog,doggy
-dog,doggies
-duck,duckie
-duck,ducky
-duck,duckies
-horse,horsie
-horse,horsies
-frog,froggie
-pajamas,jammies
-tv,television
+base,alt,incl_reason,initials, source
+mommy*,mama,common variation,SE,SE
+mommy*,mum,common variation,SE,SE
+mommy*,mummy,common variation,SE,SE
+mommy*,mom,common variation,SE,SE
+mommy*,mother,common variation,SE,SE
+daddy*,dada,common variation,SE,SE
+daddy*,baba,common variation,SE,SE
+daddy*,papa,common variation,SE,SE
+daddy*,father,common variation,SE,SE
+daddy*,dad,common variation,SE,SE
+grandma*,grammy,common variation,SE,SE
+grandma*,grandmother,common variation,SE,SE
+grandpa*,grampy,common variation,SE,SE
+grandpa*,grandfather,common variation,SE,SE
+dog,doggie,common variation,SE,SE
+dog,doggy,common variation,SE,SE
+dog,doggies,common variation,SE,SE
+duck,duckie,common variation,SE,SE
+duck,ducky,common variation,SE,SE
+duck,duckies,common variation,SE,SE
+horse,horsie,common variation,SE,SE
+horse,horsies,common variation,SE,SE
+frog,froggie,common variation,SE,SE
+pajamas,jammies,common variation,SE,SE
+tv,television,common variation,SE,SE
