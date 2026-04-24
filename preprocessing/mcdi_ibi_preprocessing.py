@@ -8,8 +8,29 @@ import warnings
 from collections import defaultdict
 import inflect
 import json
+import networkx as nx
+
+
 
 grammar_machine = inflect.engine()
+
+
+# each mcdi word gets a node in its own tree
+# then, it is branched out to show each transform through preprocessing functions
+# this tree is then matched on the first top node to all columns of a something 
+
+# nodes are tokens, edges are transforms 
+# if there are overlapping nodes (e.g. same value/name) at the end state with different potential transforms, simply add another link, not another node
+
+# initialize a node for each token, then build graph from it adding nodes and edges with transforms
+
+# for each token, build a node 
+# then apply preprocessing transforms to each token to generate new nodes, with the preprocessing transform named on the directed edge from source to target
+# each graph for a given token should be fully connected and have no duplicate nodes
+# all graphs should have a parent node 
+
+
+
 
 # ----------------------------------------------------    
 #  SETUP FUNCTIONS
@@ -45,7 +66,6 @@ def mcdi_ibi_setup(raw_mcdi_df,
     mcdi_ibi = mcdi_ibi.drop_duplicates()
 
     mcdi_ibi['alt'] = None
-    mcdi_ibi['alt_origin'] = None
     mcdi_ibi['excl_reason'] = None
 
     return mcdi_ibi
@@ -539,11 +559,12 @@ def grammatically_generated_inclusions(
 
     return d
 
+_POSSESSIVE_REASONS = frozenset({"possessive", "plural possessive", "dumb plural possessive"})
+
 def apply_compounding(alt_forms_dict):
     d = {k: dict(v) for k, v in alt_forms_dict.items()}
 
     for base, alt_forms in list(d.items()):
-        additions = {}
 
         for alt_form in list(alt_forms.keys()):
 
@@ -553,9 +574,21 @@ def apply_compounding(alt_forms_dict):
             if isinstance(parent_reason, str):
                 parent_reason = [parent_reason]
 
+            # Only compound non-possessive, non-compound forms so that the
+            # compound transform exists at exactly one level in the graph.
+            if "compound-childes_friendly" in parent_reason:
+                continue
+            if any(r in _POSSESSIVE_REASONS for r in parent_reason):
+                continue
+
             cmpd_set = compound_word_finder(alt_form)
 
             for cmpd in cmpd_set:
+
+                if cmpd == alt_form:
+                    # space-joined multi-word form equals itself — skip to
+                    # prevent corrupting the original form's reasons list
+                    continue
 
                 if cmpd not in d[base]:
                     d[base][cmpd] = {
@@ -566,19 +599,13 @@ def apply_compounding(alt_forms_dict):
 
                 else:
                     meta = d[base][cmpd]
-
-                    reasons = meta.get("reason") or []
-                    if isinstance(reasons, str):
-                        reasons = [reasons]
-
+                    reasons = list(meta.get("reason") or [])
                     reasons.extend(parent_reason)
                     reasons.append("compound-childes_friendly")
-
                     meta["reason"] = reasons
 
-        d[base].update(additions)
-
     return d
+
 def merge_mcdi_incl_dict_w_mcdi_df(mcdi_ibi_df, 
                                    alt_form_dict, 
                                    base_col='base', 

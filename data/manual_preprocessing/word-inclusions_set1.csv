@@ -1,4 +1,18 @@
 base,alt,incl_reason,initials, source
+bird,birdie,common variation,SE,SE
+bird,birdy,common variation,SE,SE
+fish (animal),fishy,common variation,SE,SE
+fish (animal),fishie,common variation,SE,SE
+dog,doggie,common variation,SE,SE
+dog,doggy,common variation,SE,SE
+duck,duckie,common variation,SE,SE
+duck,ducky,common variation,SE,SE
+horse,horsie,common variation,SE,SE
+horse,horsey,common variation,SE,SE
+frog,froggie,common variation,SE,SE
+frog,froggy,common variation,SE,SE
+pajamas,jammies,common variation,SE,SE
+tv,television,common variation,SE,SE
 mommy*,mama,common variation,SE,SE
 mommy*,mum,common variation,SE,SE
 mommy*,mummy,common variation,SE,SE
@@ -13,14 +27,12 @@ grandma*,grammy,common variation,SE,SE
 grandma*,grandmother,common variation,SE,SE
 grandpa*,grampy,common variation,SE,SE
 grandpa*,grandfather,common variation,SE,SE
-dog,doggie,common variation,SE,SE
-dog,doggy,common variation,SE,SE
-dog,doggies,common variation,SE,SE
-duck,duckie,common variation,SE,SE
-duck,ducky,common variation,SE,SE
-duck,duckies,common variation,SE,SE
-horse,horsie,common variation,SE,SE
-horse,horsies,common variation,SE,SE
-frog,froggie,common variation,SE,SE
-pajamas,jammies,common variation,SE,SE
-tv,television,common variation,SE,SE
+doll,dolly,common variation,SE,SE
+doll,dollie,common variation,SE,SE
+pig,piggie,common variation,SE,SE
+pig,piggy,common variation,SE,SE
+egg,eggy,common variation,SE,SE
+egg,eggie,common variation,SE,SE
+truck,trucky,common variation,SE,SE
+truck,truckie,common variation,SE,SE
+
