@@ -24,6 +24,18 @@ def get_grammar(word, mcdi_info):
         return entry.get("grammar")
     return None
 
+
+def infer_gramm(reasons):
+    """Infer grammatical class from transform reasons."""
+    reason_set = set(reasons) if reasons else set()
+    if "plural possessive" in reason_set or "dumb plural possessive" in reason_set:
+        return "plural_possessive_noun"
+    if "plural" in reason_set or "dumb plural" in reason_set:
+        return "plural_noun"
+    if "possessive" in reason_set:
+        return "singular_possessive_noun"
+    return "singular_noun"
+
 # EDGE HIERARCHY
 
 TRANSFORM_ORDER = {
@@ -132,7 +144,7 @@ def build_word_graph(base, alt_forms_dict, childes_counts, mcdi_info,
     # root
     G.add_node(
         base,
-        gramm=get_grammar(base, mcdi_info),
+        gramm=get_grammar(base, mcdi_info) or "singular_noun",
         category=info.get("category", "unknown"),
         r_count=childes_counts.get(base, 0),
         prod=info.get("prod"),
@@ -157,7 +169,7 @@ def build_word_graph(base, alt_forms_dict, childes_counts, mcdi_info,
         reasons = _normalize_reasons(meta.get("reason", []))
         G.add_node(
             alt,
-            gramm=get_grammar(alt, mcdi_info),
+            gramm=infer_gramm(reasons),
             category=info.get("category", "unknown"),
             r_count=childes_counts.get(alt, 0),
             prod=info.get("prod"),

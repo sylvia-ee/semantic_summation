@@ -1,5 +1,5 @@
 """
-    streamlit run app.py
+    pixi run streamlit run app.py
 """
 
 import glob
@@ -8,6 +8,7 @@ import sys
 from collections import defaultdict
 
 import networkx as nx
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -17,7 +18,6 @@ sys.path.insert(0, os.path.dirname(__file__))
 from graph_builder import build_mcdi_info, build_word_graph, hierarchical_layout
 from preprocessing.childes_preprocessing import count_words_in_childes
 from preprocessing.mcdi_ibi_preprocessing import (
-    apply_compounding,
     create_alt_form_dict,
     exclude_cats,
     exclude_proper_nouns,
@@ -48,18 +48,15 @@ GRAMM_COLORS = {
 }
 BG_COLOR = "#1a1a2e"
 
-# MUTABLE ENTRY datasets
+
 def discover_manual_files(manual_dir):
-    """
-    scan manual_preprocessing dir and group CSVs by type prefix
-    """
     return {
         "category_exclusions": sorted(glob.glob(os.path.join(manual_dir, "category-exclusions_*.csv"))),
         "word_exclusions":      sorted(glob.glob(os.path.join(manual_dir, "word-exclusions_*.csv"))),
         "word_inclusions":      sorted(glob.glob(os.path.join(manual_dir, "word-inclusions_*.csv"))),
     }
 
-# CACHE DATA LOAD + PREPROCESS
+
 @st.cache_data(show_spinner="Running preprocessing pipeline…")
 def load_and_preprocess(cat_excl_paths: tuple, word_excl_paths: tuple, word_incl_paths: tuple):
 
@@ -91,7 +88,6 @@ def load_and_preprocess(cat_excl_paths: tuple, word_excl_paths: tuple, word_incl
     for path in word_incl_paths:
         alt_forms_dict = manual_inclusions(alt_forms_dict, path)
     alt_forms_dict = grammatically_generated_inclusions(alt_forms_dict)
-    alt_forms_dict = apply_compounding(alt_forms_dict)
 
     mcdi_info = build_mcdi_info(mcdi_active)
 
@@ -102,10 +98,179 @@ def load_and_preprocess(cat_excl_paths: tuple, word_excl_paths: tuple, word_incl
     return alt_forms_dict, childes_transcripts_dict, childes_counts, mcdi_info, mcdi_active
 
 
+def _scatter_layout(x_title, x_range_log, y_range):
+    return dict(
+        paper_bgcolor=BG_COLOR,
+        plot_bgcolor=BG_COLOR,
+        font_color="white",
+        xaxis=dict(
+            type="log",
+            showgrid=False, zeroline=False,
+            title=x_title, title_font=dict(size=11),
+            range=x_range_log,
+        ),
+        yaxis=dict(
+            showgrid=False, zeroline=False,
+            title="Production score", title_font=dict(size=11),
+            range=y_range,
+        ),
+        margin=dict(l=50, r=20, t=20, b=50),
+        height=320,
+        showlegend=False,
+    )
+
+
+def _linreg_trace_log(xs, ys):
+    """Fit y ~ log10(x) and return a Scatter trace for a log-x plot."""
+    xs_arr, ys_arr = np.array(xs, dtype=float), np.array(ys, dtype=float)
+    mask = xs_arr > 0
+    if mask.sum() < 2:
+        return None
+    m, b = np.polyfit(np.log10(xs_arr[mask]), ys_arr[mask], 1)
+    x_line = np.geomspace(xs_arr[mask].min(), xs_arr[mask].max(), 100)
+    y_line = m * np.log10(x_line) + b
+    return go.Scatter(
+        x=x_line, y=y_line,
+        mode="lines",
+        line=dict(color="#99c4e8", width=1.5, dash="dot"),
+        hoverinfo="skip",
+        showlegend=False,
+    )
+
+
+def _linreg_stats(xs, ys):
+    xs_arr, ys_arr = np.array(xs, dtype=float), np.array(ys, dtype=float)
+    mask = xs_arr > 0
+    x_log = np.log10(xs_arr[mask])
+    y = ys_arr[mask]
+    m, b = np.polyfit(x_log, y, 1)
+    y_hat = m * x_log + b
+    ss_res = np.sum((y - y_hat) ** 2)
+    ss_tot = np.sum((y - y.mean()) ** 2)
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+    return dict(slope=round(m, 4), intercept=round(b, 4), r2=round(r2, 4))
+
+
+def build_scatter_r_count(all_bases, mcdi_info, childes_counts, x_range_log, y_range, highlight=None):
+    xs, ys, texts = [], [], []
+    hx, hy = None, None
+
+    for w in all_bases:
+        prod = mcdi_info.get(w, {}).get("prod")
+        if prod is None:
+            continue
+
+        x = childes_counts.get(w, 0)
+        y = prod
+
+        if highlight and w == highlight:
+            hx, hy = x, y
+        else:
+            xs.append(x)
+            ys.append(y)
+            texts.append(w)
+
+    traces = [
+        go.Scatter(
+            x=xs, y=ys,
+            mode="markers",
+            marker=dict(size=5, color="#5B9BD5", opacity=0.5),
+            text=texts,
+            hovertemplate="<b>%{text}</b><br>prod: %{y:.2f}<br>r_count: %{x:,}<extra></extra>",
+        )
+    ]
+
+    # highlighted point (RED + bigger)
+    if hx is not None:
+        traces.append(
+            go.Scatter(
+                x=[hx], y=[hy],
+                mode="markers+text",
+                marker=dict(size=12, color="red"),
+                text=[highlight],
+                textposition="top center",
+                name="highlight",
+            )
+        )
+
+    reg = _linreg_trace_log(xs, ys)
+    if reg:
+        traces.append(reg)
+
+    fig = go.Figure(traces)
+    fig.update_layout(**_scatter_layout("log CHILDES count (base form)", x_range_log, y_range))
+    return fig
+
+
+def build_scatter_c_count(
+    all_bases,
+    mcdi_info,
+    alt_forms_dict,
+    childes_counts,
+    x_range_log,
+    y_range,
+    highlight=None,
+):
+    xs, ys, texts = [], [], []
+    hx, hy = None, None
+
+    for w in all_bases:
+        prod = mcdi_info.get(w, {}).get("prod")
+        if prod is None:
+            continue
+
+        c = sum(childes_counts.get(alt, 0) for alt in alt_forms_dict.get(w, {}))
+
+        # skip zeros for log-scale plotting
+        if c <= 0:
+            continue
+
+        # check highlight (case-insensitive)
+        if highlight and w.lower() == highlight.lower():
+            hx, hy = c, prod
+        else:
+            xs.append(c)
+            ys.append(prod)
+            texts.append(w)
+
+    traces = [
+        go.Scatter(
+            x=xs,
+            y=ys,
+            mode="markers",
+            marker=dict(size=5, color="#70AD47", opacity=0.5),
+            text=texts,
+            hovertemplate="<b>%{text}</b><br>prod: %{y:.2f}<br>c_count: %{x:,}<extra></extra>",
+        )
+    ]
+
+    # highlighted point (red, larger, labeled)
+    if hx is not None:
+        traces.append(
+            go.Scatter(
+                x=[hx],
+                y=[hy],
+                mode="markers+text",
+                marker=dict(size=12, color="red"),
+                text=[highlight],
+                textposition="top center",
+                name="highlight",
+                hovertemplate="<b>%{text}</b><br>prod: %{y:.2f}<br>c_count: %{x:,}<extra></extra>",
+            )
+        )
+
+    # regression line (only on non-highlighted points to avoid bias)
+    reg = _linreg_trace_log(xs, ys)
+    if reg:
+        traces.append(reg)
+
+    fig = go.Figure(traces)
+    fig.update_layout(
+        **_scatter_layout("log CHILDES count (all forms)", x_range_log, y_range)
+    )
+    return fig
+
 def draw_graph_plotly(G: nx.DiGraph, base: str) -> go.Figure | None:
-    """
-    interactive digraph 
-    """
     if len(G.nodes) == 0:
         return None
 
@@ -117,16 +282,21 @@ def draw_graph_plotly(G: nx.DiGraph, base: str) -> go.Figure | None:
     edge_x, edge_y = [], []
     annotations = []
 
+    edge_transforms: dict[tuple, list[str]] = defaultdict(list)
     for u, v, data in G.edges(data=True):
+        edge_transforms[(u, v)].append(data.get("transform", ""))
+
+    for (u, v), transforms in edge_transforms.items():
         x0, y0 = pos[u]
         x1, y1 = pos[v]
         edge_x += [x0, x1, None]
         edge_y += [y0, y1, None]
 
         mx, my = (x0 + x1) / 2, (y0 + y1) / 2
+        label = " / ".join(sorted(set(t for t in transforms if t)))
         annotations.append(dict(
             x=mx, y=my,
-            text=data.get("transform", ""),
+            text=label,
             showarrow=False,
             font=dict(size=9, color="black"),
             bgcolor="white",
@@ -210,7 +380,6 @@ def draw_graph_plotly(G: nx.DiGraph, base: str) -> go.Figure | None:
 
 
 def build_sankey(G: nx.DiGraph, base: str) -> go.Figure | None:
-    """interactive sankey"""
     nodes = list(G.nodes)
     if not nodes:
         return None
@@ -218,17 +387,21 @@ def build_sankey(G: nx.DiGraph, base: str) -> go.Figure | None:
     node_idx = {n: i for i, n in enumerate(nodes)}
     sources, targets, values, link_labels = [], [], [], []
 
+    edge_map: dict[tuple, list[str]] = defaultdict(list)
     for u, v, data in G.edges(data=True):
+        edge_map[(u, v)].append(data.get("transform", ""))
+
+    for (u, v), transforms in edge_map.items():
         sources.append(node_idx[u])
         targets.append(node_idx[v])
         values.append(max(G.nodes[v].get("r_count", 0), 1))
-        link_labels.append(data.get("transform", ""))
+        link_labels.append(" / ".join(sorted(set(t for t in transforms if t))))
 
     if not sources:
         return None
 
     node_colors = [
-        GRAMM_COLORS.get(G.nodes[n].get("gramm", "singular_noun"), "#888888")
+        GRAMM_COLORS.get(G.nodes[n].get("gramm") or "singular_noun", "#888888")
         for n in nodes
     ]
 
@@ -288,7 +461,6 @@ def build_sankey(G: nx.DiGraph, base: str) -> go.Figure | None:
 
 
 def node_attributes_table(G: nx.DiGraph) -> pd.DataFrame:
-    """display df """
     rows = [
         {
             "word": n,
@@ -302,28 +474,18 @@ def node_attributes_table(G: nx.DiGraph) -> pd.DataFrame:
     ]
     return pd.DataFrame(rows).sort_values("r_count", ascending=False).reset_index(drop=True)
 
-
-#_______________
-# GUI
-#_______________
-
 st.set_page_config(page_title="Word Graphs", layout="wide")
 st.title("Counts and Forms for CHILDES")
 st.caption("American-English Corpus from 0-24 months with MCDI production data")
 
-# preprocessing files dropdown
 available = discover_manual_files(MANUAL_DIR)
 
 def _fnames(paths):
-    """Display-friendly filenames (no directory)."""
     return [os.path.basename(p) for p in paths]
 
 def _paths_for(names, all_paths):
-    """Recover full paths from selected basenames."""
     name_to_path = {os.path.basename(p): p for p in all_paths}
     return [name_to_path[n] for n in names if n in name_to_path]
-
-# sidebar panel 
 
 with st.sidebar:
     with st.expander("Preprocessing files", expanded=False):
@@ -353,18 +515,15 @@ alt_forms_dict, childes_transcripts_dict, childes_counts, mcdi_info, mcdi_active
 
 all_bases = sorted(alt_forms_dict.keys())
 
-# production entry 
 prods = [v["prod"] for v in mcdi_info.values() if v.get("prod") is not None]
 prod_min = float(min(prods)) if prods else 0.0
 prod_max = float(max(prods)) if prods else 1.0
 
-# initialize data session (rerun only on change)
 if "_prod_lo" not in st.session_state:
     st.session_state["_prod_lo"] = prod_min
 if "_prod_hi" not in st.session_state:
     st.session_state["_prod_hi"] = prod_max
 
-# search and filter sidebar
 with st.sidebar:
     st.header("Search & Filters")
 
@@ -374,37 +533,83 @@ with st.sidebar:
     selected_categories = st.multiselect("Category", all_categories, default=all_categories)
 
     st.markdown("**Production score**")
-
     col_lo, col_hi = st.columns(2)
     with col_lo:
         st.session_state["_prod_lo"] = st.number_input(
-            "Min",
-            min_value=prod_min,
-            max_value=prod_max,
-            value=st.session_state["_prod_lo"],
-            step=0.01,
-            format="%.2f",
+            "Min", min_value=prod_min, max_value=prod_max,
+            value=st.session_state["_prod_lo"], step=0.01, format="%.2f",
         )
-
     with col_hi:
         st.session_state["_prod_hi"] = st.number_input(
-            "Max",
-            min_value=prod_min,
-            max_value=prod_max,
-            value=st.session_state["_prod_hi"],
-            step=0.01,
-            format="%.2f",
+            "Max", min_value=prod_min, max_value=prod_max,
+            value=st.session_state["_prod_hi"], step=0.01, format="%.2f",
         )
 
     prod_range = (st.session_state["_prod_lo"], st.session_state["_prod_hi"])
-
     exclude_zero = st.checkbox("Exclude zero-count forms", value=False)
 
     st.divider()
     st.caption(f"Base words loaded: **{len(alt_forms_dict)}**")
     st.caption(f"CHILDES total tokens: **{sum(childes_counts.values()):,}**")
 
-# filter on base words
+
+_all_r_xs, _all_c_xs, _all_ys = [], [], []
+for _w in all_bases:
+    _prod = mcdi_info.get(_w, {}).get("prod")
+    if _prod is None:
+        continue
+    _all_r_xs.append(childes_counts.get(_w, 0))
+    _all_c_xs.append(sum(childes_counts.get(_a, 0) for _a in alt_forms_dict.get(_w, {})))
+    _all_ys.append(_prod)
+
+_nz = [x for x in _all_r_xs + _all_c_xs if x > 0]
+_x_range_log = [np.log10(min(_nz)) - 0.15, np.log10(max(_nz)) + 0.15] if _nz else [0, 4]
+_y_pad = (max(_all_ys or [1]) - min(_all_ys or [0])) * 0.05
+_y_range = [min(_all_ys or [0]) - _y_pad, max(_all_ys or [1]) + _y_pad]
+
+
+_valid = [(r, c, y) for r, c, y in zip(_all_r_xs, _all_c_xs, _all_ys) if r > 0]
+_r_valid = [v[0] for v in _valid]
+_c_valid = [v[1] for v in _valid]
+_y_valid = [v[2] for v in _valid]
+_sr = _linreg_stats(_r_valid, _y_valid)
+_sc = _linreg_stats(_c_valid, _y_valid)
+
+highlight_word = None
+
+col_scatter_l, col_scatter_r = st.columns(2)
+
+with col_scatter_l:
+    st.markdown("**Production vs base-form count**")
+    fig_r = build_scatter_r_count(
+        all_bases, mcdi_info, childes_counts,
+        _x_range_log, _y_range,
+        highlight=st.session_state.get("highlight_word")
+    )
+    st.plotly_chart(fig_r, use_container_width=True)
+    _sr = _linreg_stats(_all_r_xs, _all_ys)
+    if _sr:
+        _a, _b, _c, _d = st.columns(4)
+        _a.caption(f"slope `{_sr['slope']:+.4f}`")
+        _b.caption(f"intercept `{_sr['intercept']:.4f}`")
+        _c.caption(f"R² `{_sr['r2']:.4f}`")
+
+with col_scatter_r:
+    st.markdown("**Production vs cumulative count**")
+    fig_c = build_scatter_c_count(
+    all_bases, mcdi_info, alt_forms_dict, childes_counts,
+    _x_range_log, _y_range,
+    highlight=st.session_state.get("highlight_word")
+    )
+    st.plotly_chart(fig_c, use_container_width=True)
+    _sc = _linreg_stats(_all_c_xs, _all_ys)
+    if _sc:
+        _a, _b, _c, _d = st.columns(4)
+        _a.caption(f"slope `{_sc['slope']:+.4f}`")
+        _b.caption(f"intercept `{_sc['intercept']:.4f}`")
+        _c.caption(f"R² `{_sc['r2']:.4f}`")
+
+
 filtered_bases = [
     w for w in all_bases
     if mcdi_info.get(w, {}).get("category", "unknown") in selected_categories
@@ -415,22 +620,25 @@ filtered_bases = [
     and (not exclude_zero or childes_counts.get(w, 0) > 0)
 ]
 
-# word selection behavior 
-selected_base = None
-
 st.subheader(f"All MCDI base words ({len(filtered_bases)} shown)")
 
-word_table = pd.DataFrame([
-    {
+
+
+def _word_row(w):
+    r = childes_counts.get(w, 0)
+    c = sum(childes_counts.get(alt, 0) for alt in alt_forms_dict.get(w, {}))
+    log_dist = round(np.log1p(c) - np.log1p(r), 3)
+    return {
         "word": w,
         "category": mcdi_info.get(w, {}).get("category", ""),
         "prod": mcdi_info.get(w, {}).get("prod"),
-        "alt_forms": sum(1 for form in alt_forms_dict.get(w, {})
-    if childes_counts.get(form, 0) > 0),
-        "r_count (base)": childes_counts.get(w, 0),
+        "alt_forms": sum(1 for f in alt_forms_dict.get(w, {}) if childes_counts.get(f, 0) > 0),
+        "r_count": r,
+        "c_count": c,
+        "log_distance": log_dist,
     }
-    for w in filtered_bases
-])
+
+word_table = pd.DataFrame([_word_row(w) for w in filtered_bases])
 
 selection = st.dataframe(
     word_table,
@@ -444,11 +652,14 @@ selected_base = None
 if selection.selection.rows:
     selected_base = word_table.iloc[selection.selection.rows[0]]["word"]
 
-# graph displays
+highlight_word = None
+if selection.selection.rows:
+    highlight_word = word_table.iloc[selection.selection.rows[0]]["word"]
+
 if selected_base:
     G = build_word_graph(
         selected_base, alt_forms_dict, childes_counts, mcdi_info,
-        skip_compounds=False,
+        skip_compounds=True,
     )
 
     if exclude_zero:

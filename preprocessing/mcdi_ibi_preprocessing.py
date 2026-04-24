@@ -29,7 +29,11 @@ grammar_machine = inflect.engine()
 # each graph for a given token should be fully connected and have no duplicate nodes
 # all graphs should have a parent node 
 
-
+def normalize_token(token: str) -> str:
+    token = str(token).lower()
+    token = re.sub(r"\*", "", token)          # remove *
+    token = re.sub(r"\s*\([^)]*\)\s*", "", token)  # remove parentheses content
+    return token.strip()
 
 
 # ----------------------------------------------------    
@@ -58,7 +62,7 @@ def mcdi_ibi_setup(raw_mcdi_df,
 
     mcdi_ibi = raw_mcdi_df.copy()
 
-    mcdi_ibi[base_col] = mcdi_ibi[orig_base].astype(str).str.lower()
+    mcdi_ibi[base_col] = mcdi_ibi[orig_base].apply(normalize_token)
     mcdi_ibi[cat_col] = mcdi_ibi[cat_col].astype(str).str.lower()
     mcdi_ibi[item_id] = mcdi_ibi[item_id].astype(str).str.lower().astype("category")
     mcdi_ibi[sample_prod_col] = mcdi_ibi[orig_sample_prod_col].astype(float)
